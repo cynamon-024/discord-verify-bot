@@ -8,6 +8,7 @@ load_dotenv()
 
 VERIFY_CHANNEL_NAME = "verify"
 VERIFIED_ROLE_NAME = "Verified"
+UNVERIFIED_ROLE_NAME = "Unverified"
 
 # ==================================================
 # STUDENT DATABASE CACHE
@@ -22,11 +23,11 @@ def load_students():
 
     try:
 
-        current_modified = os.path.getmtime("students.xlsx")
+        current_modified = os.path.getmtime("students.csv")
 
         if current_modified != last_modified:
 
-            df = pd.read_excel("students.xlsx")
+            df = pd.read_csv("students.csv")
             df.columns = df.columns.str.strip()
 
             students_cache = {}
@@ -37,17 +38,15 @@ def load_students():
 
                 students_cache[(name, sid)] = True
 
-            print("Student database reloaded.")
-
-            last_modified = current_modified
-
             print(
                 f"Student database reloaded. "
                 f"{len(students_cache)} students loaded."
             )
 
+            last_modified = current_modified
+
     except PermissionError:
-        print("Spreadsheet locked. Using cached data.")
+        print("CSV file locked. Using cached data.")
 
     return students_cache
 
@@ -108,37 +107,87 @@ async def on_message(message):
     # SUCCESS CASE
     # ==================================================
 
+    # ==================================================
+# SUCCESS CASE
+# ==================================================
+
     if key in valid_students:
 
-        role = discord.utils.get(
+        verified_role = discord.utils.get(
             message.guild.roles,
             name=VERIFIED_ROLE_NAME
         )
 
-        if role is None:
+        unverified_role = discord.utils.get(
+            message.guild.roles,
+            name=UNVERIFIED_ROLE_NAME
+        )
+
+        if verified_role is None:
             await message.channel.send(
                 "❌ Verified role not found. Please contact an admin."
             )
             return
 
+        # User is already verified
+        if verified_role in message.author.roles:
+            await message.channel.send(
+                f"⚠️ {message.author.mention} you are already verified."
+            )
+            await message.delete()
+            return
+
         # Debug role information
         print("BOT TOP ROLE:", message.guild.me.top_role)
-        print("TARGET ROLE:", role)
-        print("ROLE POSITION:", role.position)
+        print("TARGET ROLE:", verified_role)
+        print("ROLE POSITION:", verified_role.position)
         print(
             "BOT CAN MANAGE:",
             message.guild.me.guild_permissions.manage_roles
         )
 
-        await message.author.add_roles(role)
-        await message.author.edit(nick=name.title())
+        try:
 
-        await message.channel.send(
-            f"✅ {message.author.mention} successfully verified!\n"
-            f"Welcome to the server! 🎉"
-        )
+            # Remove Unverified role if present
+            if (
+                unverified_role is not None
+                and unverified_role in message.author.roles
+            ):
+                await message.author.remove_roles(
+                    unverified_role,
+                    reason="Student successfully verified"
+                )
 
-        await message.delete()
+            # Add Verified role
+            await message.author.add_roles(
+                verified_role,
+                reason="Student successfully verified"
+            )
+
+            # Change nickname
+            await message.author.edit(
+                nick=name.title()
+            )
+
+            await message.channel.send(
+                f"✅ {message.author.mention} successfully verified!\n"
+                f"Welcome to the server! 🎉"
+            )
+
+            # Delete verification message
+            await message.delete()
+
+        except discord.Forbidden:
+            await message.channel.send(
+                "❌ I don't have permission to manage roles "
+                "or change nicknames."
+            )
+
+        except discord.HTTPException as e:
+            await message.channel.send(
+                f"❌ Discord API error: {e}"
+            )
+
         return
 
     # ==================================================
